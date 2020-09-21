@@ -1,0 +1,295 @@
+---
+title: "onycophoran"
+author: "John D. Kirwan"
+date: "9/20/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library('psyphy')
+library('lmerTest')
+library('circular')
+library('lme4')
+library('ggplot2')
+library('DHARMa')
+```
+
+
+
+```{r}
+getwd() # should be the 'src' source folder
+cdata <- read.delim('ony_data2.txt', header=T)
+cdata <- subset.data.frame(cdata, is.na(goal15) == FALSE) ### remove NA values at beginning
+```
+
+Make 0 into a sinus stimulus
+
+```{r}
+for(i in 1:length(cdata$type)){ if(cdata$type[i] == "control"){cdata$type[i] <- "piecewise sine"}}
+```
+
+
+Proportion of successes in 90 deg area from centre of dark target
+
+```{r}
+cdata$success <- vector(length = length(cdata$goal15))
+for(i in 1:length(cdata$goal15)){
+  if(cdata$goal15[i] <= 45 ){cdata$success[i] = 1}
+  else if(cdata$goal15[i] > 315){cdata$success[i] = 1}
+  else{cdata$success[i] = 0}}
+cdata$success <- as.logical(cdata$success)
+cdata$radians <- (cdata$condition*pi)/180
+cdata$Individual    <- as.factor(cdata$Individual)
+```
+
+Make condition a factor
+
+```{r}
+cdata$position <- vector(length = length(cdata$direction))
+for(i in 1:length(cdata$direction)){
+  if(grepl("S", cdata$direction[i])==T){cdata$position[i] <- "East"}
+  else if(grepl("T", cdata$direction[i])==T){cdata$position[i] <- "North"}
+  else if(grepl("W", cdata$direction[i])==T){cdata$position[i] <- "South"}
+  else {cdata$position[i] <- "West"}    }
+cdata$position <- as.factor(cdata$position)
+cdata <- droplevels(cdata)
+cdata$T <- cdata$targetwidth / max(cdata$targetwidth)
+```
+
+# cdata$log.targetwidth <- vector(length = length(cdata$targetwidth)); cdata$log.targetwidth <- log(cdata$targetwidth + 0.01)
+
+```{r}
+for(i in 1:length(cdata$condition)){
+  if(cdata$type[i] == "sinus"){
+    cdata$targetwidth[i] <- cdata$radians[i]*(180/pi)*(2/9) } # half the target width
+  else{ cdata$targetwidth[i] <- cdata$radians[i]*(180/pi) }       # for the bars
+}
+
+alldata  <- cdata
+cdata <- droplevels(subset.data.frame(cdata, type != "bar"))   ### doesnt hugely affect model
+# cdata <- droplevels(subset.data.frame(cdata, targetwidth < 25))   ### see if removing the more spread out largest patterns recovers the logistic
+```
+
+
+
+
+```{r}
+arc_mod4a <- glmer(success ~ T*position + (1|Individual), cdata,
+                   family = binomial(mafc.probit(.m = 5)))
+
+arc_mod4b <- glmer(success ~ T + position + (1|Individual), cdata,
+                   family = binomial(mafc.probit(.m = 5)))
+
+arc_mod4c <- glmer(success ~ T + (1|Individual), cdata,
+                   family = binomial(mafc.probit(.m = 5)))
+
+arc_mod4d <- glmer(success ~ 1 + (1|Individual), cdata,
+                   family = binomial(mafc.probit(.m = 5)))
+```
+
+
+
+```{r}
+q.gamma <- rep(qnorm(0.25),nrow(cdata))  ## vector of values of the qnorm of 1/6 to fit the probit link
+```
+
+Extract values
+
+
+
+```{r}
+library('lmerTest')
+current <- arc_mod4c
+summary(current)
+current.CIs <- sqrt(diag(vcov(current)))
+tab <- cbind(Est = fixef(current), LL = fixef(current) - 1.96 * current.CIs, UL = fixef(current) + 1.96 * current.CIs )
+```
+
+
+## fixef gets the coeficients (IN LOG ODDS ON THE LOGIT SCALE in the case of a logistic!)
+## The logit scale is convenient because it is linearized, meaning that a 1 unit increase
+## in a predictor results in a coefficient unit increase in the outcome and this holds
+## regardless of the levels of the other predictors (setting aside interactions for the
+## moment). A downside is the scale is not very interpretable. It is hard for readers to
+## have an intuitive understanding of logits.
+
+## for probit, gives the probability units. Doesn't tell you an awful lot (possibly same with logit) - only the
+## slope at certain points as slope is not constant throuoghout. For intercept will give you the value at 0.
+# Get logisitic regression function
+# DeLogit  <- function(Logit){ return(exp(Logit)/(1+exp(Logit)))}
+
+```{r}
+DeProbit <- function(Probit){ return(pnorm(Probit))}
+DeProbit(summary(current)$coef[1,1]) ## y at the x-intercept
+```
+
+#arc.angle  <- (seq(0, 3.2, len = 1000))
+#log.angle  <- log(arc.angle)
+#log.formula <- coef(summary(current))[1,1] + coef(summary(current))[2,1] * arc.angle
+# success.proportion <- pnorm(log.formula)
+
+```{r}
+cdata$pred <- predict(current, cdata, type="response")  ## make column of predicted proprtion values for each (individual and) data point
+coefs <- summary(current)$coefficients ### extract estimates for each coefficient of the model
+```
+
+
+#Visualize                         
+visualize predictions by category and continuous effect
+
+```{r}
+library('beeswarm')
+boxplot(cdata$pred~cdata$type, xlab="type", ylab="proportion")
+```
+
+
+
+```{r}
+boxplot(cdata$pred~cdata$targetwidth, xlab="Resolution", ylab="Proportion" )
+title("Estimated success rate for each stimulus")
+```
+
+
+```{r}
+sinus_data <-subset(cdata, cdata$type == "piecewise sine")    # create dataset for each signal type
+plot(sinus_data$pred~ (sinus_data$T), xlab="Normalized arc width", ylab="Proportion",
+     xlim=c(0,1), ylim=c(0,0.8), pch=19, col="red")
+abline(a = (1/4), b = 0)
+```
+
+
+### extract from logistic regression ###########################################################################
+#modify for both sinus types
+
+```{r}
+j = 1; arc_success_odds <- array(dim = c(nlevels(as.factor(cdata$targetwidth)),2)) # get probabilities for each arc angle from pooled individuals
+for(i in levels(as.factor(cdata$T))){
+  s <- (as.numeric(cdata$success[cdata$T == i]))
+  arc_success_odds[j,1] <- (as.numeric(levels(as.factor(cdata$T))[j]))
+  arc_success_odds[j,2] <- as.numeric(sum(s) / length(s))  # successes over total
+  j = j + 1   }
+```
+
+
+######################################################################################################
+plot 3: the combined estimates
+######################################################################################################
+
+```{r}
+#for GLMMs we have to back-transform the prediction after adding/removing the SE
+newdat<-data.frame(x=(seq(0,max(cdata$T),length=1000)))
+mm<-model.matrix(~x,newdat)
+y<-mm%*%fixef(current)   #modified to include intercept and first slope
+pvar1 <- diag(mm %*% tcrossprod(vcov(current),mm))
+tvar1 <- pvar1+VarCorr(current)$Individual[1] # +VarCorr(current)$position[1]   ## add effect of individual Individual
+x  <- (seq(0, max(cdata$targetwidth), len = 1000))
+
+newdat <- data.frame( x=(newdat$x),   # make dummy dataframe
+                      y=  pnorm(y),   #to introduce psychometric f(x) ## check if
+                        plo = pnorm(y-1.96*sqrt(pvar1))
+                      , phi = pnorm(y+1.96*sqrt(pvar1))
+                      , tlo = pnorm(y-1.96*sqrt(tvar1))
+                      , thi = pnorm(y+1.96*sqrt(tvar1))     )
+
+newdat[,2:6]  <- 0.25 + (1 - 0.25)*newdat[,2:6] ### rescale based on the psychometric function
+```
+
+
+```{r}
+plot(cdata$pred~ (cdata$T), xlab="", ylab="", bty = "n",
+     xlim=c(0,max(cdata$T)), ylim=c(0,1), pch='', col="white", xaxt='n', yaxt='n' )
+legend("topleft", legend=c("Fitted line", "Confidence interval","Prediction interval","Chance line","Predicted values"),
+       col = c("red","yellow","magenta","darkgreen","blue"), pch=c(15,15), border = NULL)
+label.arc <- round(as.numeric(levels(as.factor(cdata$T))),digits = 1)
+
+axis(2, at = (0:4)*.25, labels = paste0((0:4)*25,'%') , cex = 1)
+axis(1, at =   as.numeric(levels(as.factor(cdata$T)))  , labels = paste0(label.arc, "\U00B0"), col = 'black' , cex.lab = 40/50)
+mtext('Proportion correct', side = 2, line = 2.5,  cex = 0.75)
+mtext('Arc width', side = 1, line = 2.5,  cex = 0.1)
+
+e <-  c(newdat$phi, rev( newdat$plo ) )     #
+f <-  c(newdat$x,rev(newdat$x))
+polygon( c(newdat$x,rev(newdat$x)),e, col = rgb(1, 1, 0, 1), border = rgb(0, 0, 0, 0))
+
+abline(a = 1/4, b = 0, col = "darkgreen",lty = 1, lwd = 1)
+lines(newdat$x ,newdat$y,col="red",lty=2,lwd=1)
+lines(newdat$x,newdat$tlo,col="magenta",lty=2,lwd=1)
+lines(newdat$x,newdat$thi,col="magenta",lty=2,lwd=1)
+#points(cdata$pred~ cdata$targetwidth, pch=20, col="blue" )
+
+fmx <- 0
+for(lv in levels(as.factor(cdata$T)) ){            # for each level of resolution
+  for(oe in cdata$pred[cdata$T == lv]){           # for each prediction
+    fq <- sum(cdata$pred[cdata$T == lv] == oe)
+    points(lv, oe, pch = 16, cex = fq/2, col = rgb(0,0,1,0.5))   ###/fq))
+    if(fq>fmx){fmx <- fq} }}
+
+## plot mean observations
+points(arc_success_odds[,1],arc_success_odds[,2], pch = "-")
+```
+
+
+## check if there are duplicate usages of indivudals for each treatment
+
+```{r}
+length(unique(alldata$Individual[alldata$condition==0])) == length((alldata$Individual[alldata$condition==0]))
+
+ #for(oe in range(dtc$AOE[dtc$Contrast == lv]))
+ #for(lv in levels(dtc$Contrast))
+```
+
+
+Plot residuals
+
+```{r}
+plot(fitted(current), residuals(current), xlab = "Fitted Values", ylab = "Residuals")
+abline(h = 0, lty = 2)
+lines(smooth.spline(fitted(current), residuals(current)) ) #, control=list(tol=1e-2))
+#lines(loess(residuals(current) ~ fitted(current)),col="green")
+```
+
+Check stuff
+
+```{r}
+set.seed(345)
+simulationOutput <- simulateResiduals(fittedModel = current, n = 1000) # default is 250n, raise to >999 for precision
+plotSimulatedResiduals(simulationOutput = simulationOutput)
+
+```
+
+
+
+## expected and observed values come from qqnorm in the stats package ultimately
+
+# HERE WE DO A BASIC SCATTERPLOT OF THE DATA WITH ORDINARY LEAST SQUARES REGRESSION LINE, JUST TO SEE WHAT IT LOOKS LIKE.
+
+```{r}
+plot(cdata$targetwidth, cdata$success, pch=16, col=rgb(0,0,204,102,maxColorValue=255))
+olsLine <- lm(cdata$success ~ cdata$targetwidth)
+abline(olsLine, col="red")
+```
+
+
+# THE SUMMARY OF THE BASIC O.L.S. REGRESSION SUGGESTS THAT THERE IS A STATISICALLY SIGNIFICANT CORRELATION BETWEEN LOG(POPULATION) AND NUMBER OF PHONEMES.
+summary(olsLine)
+
+# HOWEVER, WE HAVEN'T YET CHECKED THE DATA FOR ADHERANCE TO THE MODEL ASSUMPTIONS. FOR EXAMPLE, THE Q-Q PLOT OF RESIDUALS SHOWS THAT THE RESIDUALS ARE NOT
+# NORMALLY DISTRIBUTED (INDICATED BY THEIR DEVIATION FROM THE Q-Q LINE), WHICH IS AN IMPORTANT ASSUMPTION OF LINEAR MODELLING.
+
+```{r}
+qqnorm(residuals(olsLine))
+qqline(residuals(olsLine))
+```
+
+Get info from this session
+
+```{r}
+sessionInfo()
+```
+
