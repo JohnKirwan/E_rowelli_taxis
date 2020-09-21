@@ -164,8 +164,9 @@ abline(a = (1/4), b = 0)
 ```
 
 
-### extract from logistic regression ###########################################################################
-#modify for both sinus types
+Extract from logistic regression
+
+Modify for both sinus types
 
 ```{r}
 j = 1; arc_success_odds <- array(dim = c(nlevels(as.factor(cdata$targetwidth)),2)) # get probabilities for each arc angle from pooled individuals
